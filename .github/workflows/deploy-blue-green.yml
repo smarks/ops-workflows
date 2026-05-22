@@ -1,0 +1,50 @@
+name: Blue/green deploy
+
+on:
+  workflow_call:
+    inputs:
+      app-dir:
+        description: "Absolute path of the app checkout on the deploy host (e.g. /home/sam/dev/tarmar-studio)"
+        required: true
+        type: string
+      command:
+        description: "Optional deploy.sh subcommand: '', 'rollback', or 'status'. Empty = normal deploy."
+        required: false
+        type: string
+        default: ""
+      host:
+        description: "SSH host to deploy to"
+        required: false
+        type: string
+        default: roots.origamisoftware.com
+      user:
+        description: "SSH user on the deploy host"
+        required: false
+        type: string
+        default: sam
+    secrets:
+      ssh-key:
+        description: "Private SSH key authorized on the deploy host"
+        required: true
+
+concurrency:
+  group: deploy-${{ inputs.app-dir }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.ssh-key }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ inputs.host }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Run deploy.sh on host
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=yes \
+              "${{ inputs.user }}@${{ inputs.host }}" \
+              "cd '${{ inputs.app-dir }}' && ./deploy.sh ${{ inputs.command }}"
