@@ -40,7 +40,31 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.ssh-key }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "${{ inputs.host }}" >> ~/.ssh/known_hosts 2>/dev/null
+          # Transient runner DNS failures have flaked real deploys
+          # (tarmar-studio#212): retry the two network-only steps with
+          # backoff. deploy.sh itself is deliberately NOT retried -- a
+          # blue-green deploy that failed midway needs eyes, not a rerun.
+          for attempt in 1 2 3 4 5; do
+            if ssh-keyscan -H "${{ inputs.host }}" >> ~/.ssh/known_hosts 2>/dev/null; then
+              break
+            fi
+            echo "ssh-keyscan attempt $attempt failed; retrying in $((attempt * 5))s"
+            sleep $((attempt * 5))
+          done
+          grep -q . ~/.ssh/known_hosts
+
+      - name: Verify SSH connectivity (retried)
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+                "${{ inputs.user }}@${{ inputs.host }}" true; then
+              exit 0
+            fi
+            echo "connect attempt $attempt failed; retrying in $((attempt * 5))s"
+            sleep $((attempt * 5))
+          done
+          echo "could not reach ${{ inputs.host }} after 5 attempts" >&2
+          exit 1
 
       - name: Run deploy.sh on host
         run: |
